@@ -20,14 +20,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os, glob
 import math
+import imageio
 # MicaSense imageprocessing toolbox imports
 from micasense import image, capture, panel, imageset, dls, plotutils, utils
 
 '''Accessing files locations'''
-mainPath = os.path.join('D:\\OneDrive','OneDrive - Universite de Liege','01.Fieldwork','04.Drones','02.Tests','01.Colonster','23.02.14.Tests','MicaSense')
-calibrationPath = glob.glob(os.path.join(mainPath,'0005SET','000','IMG_0056_*.tif'))
+mainPath = os.path.join('.','data','test')#os.path.join('D:\\OneDrive','OneDrive - Universite de Liege','01.Fieldwork','04.Drones','02.Tests','01.Colonster','23.02.14.Tests','MicaSense')
+calibrationPath = glob.glob(os.path.join(mainPath, 'IMG_0007_*.tif'))#mainPath,'0005SET','000','IMG_0056_*.tif'))
+imagesPath = None
 
 '''Processing of the calibration panel data'''
+dlsOrientationVector = np.array([0,0,-1])
 cap = capture.Capture.from_filelist(calibrationPath)
 for img in cap.images:
     print(f'Band nb. {img.meta.band_index()} ({img.meta.band_name()}):')
@@ -36,14 +39,49 @@ for img in cap.images:
     print(f'\t- Exposure time: {img.meta.exposure()}')
     print(f'\t- ISO: {img.meta.get_item("EXIF:ISOSpeed")}')
     print(f'\t- Bits per pixel: {img.meta.bits_per_pixel()}')
-#     radianceImage, L, V, R = utils.raw_image_to_radiance(img.meta, img.raw())
-#     fig, ax = plt.subplots(2,2)
-#     i = 0
-#     for val in [radianceImage, L, V, R]:
-#         ax[i]
-# cap.plot_vignette()
-# plt.show(block=True)
+# RedEdge-P Downwelling Light Sensor (DLS) values
+plt.scatter(cap.center_wavelengths(), cap.dls_irradiance(), color='b', label='DLS Sensor')
+plt.scatter(cap.center_wavelengths(), cap.panel_irradiance(), color='r', label='Calibration Panel')
+plt.xlabel('Wavelength (nm)')
+plt.ylabel('Irradiance ($W/m^2/nm$)')
+plt.legend()
 
+fig, ax = plt.subplots()
+wavelengths = np.linspace(0, 2000, 1000)
+def gaussian(x, mu, sig):
+    return (np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.))))/(np.sqrt(2*np.pi)*sig)
+for img in cap.images:
+    center = img.meta.center_wavelength()
+    bandwidth = img.meta.bandwidth()
+    std = bandwidth/(2*math.sqrt(2*math.log(2)))
+    amplitude = gaussian(wavelengths, center, std)
+    ax.plot(wavelengths, amplitude, label=img.meta.band_name())
+ax.set_xlabel('Wavelength (nm)')
+ax.set_ylabel('Relative Amplitude (/)')
+ax.legend()
 
+cap.plot_raw()
+cap.plot_vignette()
+cap.plot_undistorted_reflectance(np.multiply(cap.dls_irradiance(),cap.panel_irradiance()))
+plt.show(block=True)
 
+# cap.save_capture_as_rgb()
 
+# for the export of the images, use imageio
+for i, img in enumerate(cap.images):
+    name = "{0}_{2}{1}".format(*os.path.splitext(img.path) + ('post',))
+    values = img.undistorted_reflectance(cap.dls_irradiance()[i]*cap.panel_irradiance()[i])
+    imageio.imwrite(name, values)
+
+###
+# Now, the processing pipeline seem to be: 
+# - Pre-process the images for vignetting and reflectance correction 
+#       - panel correction (f(t)=a+b*t from initial and last calibration)
+#       - dls correction (f(t) from dls sensor)
+#       - ratio for shadows from clouds = 1??? or 1/6??? How to build this? (can be ignored if constant accross the measure) 
+# - Building orthophoto using ODM (WebODM) with the option to change scale to reflectance turned off
+#       - This approach builds the orthophotos after aligning the different images
+# - Building orthophoto using ODM for the panchromatic image 
+# - Aligne both orthophotos
+# - Pansharpen the images using ??? (PCA pansharpening of CNN???)
+# - Profit??? :p

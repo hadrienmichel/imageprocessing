@@ -57,6 +57,29 @@ def rotations_degrees_to_rotation_matrix(rotation_degrees):
    R = Rx*Ry*Rz
    return R
 
+# Functions from https://forum.developer.parrot.com/t/vignetting-correction-sample-code/5614
+def build_powers_coefficients(powers, coefficients):
+    '''
+    :return: List of tuples of the form (n, m, coefficient)
+    '''
+    powers_coefficients = []
+
+    power_items = powers.split(',')
+    coefficient_items = coefficients.split(',')
+
+    for i in range(0, len(power_items), 2):
+        powers_coefficients.append((int(power_items[i]), int(power_items[i+1]), float(coefficient_items[int(i/2)])))
+
+    return powers_coefficients
+
+def vignetting(powers_coefficients, x, y):
+    value = 0.0
+
+    for entry in powers_coefficients:
+        value = value + entry[2] * math.pow(x, entry[0]) * math.pow(y, entry[1])
+
+    return value
+
 class Image(object):
     """
     An Image is a single file taken by a RedEdge camera representing one
@@ -322,33 +345,53 @@ class Image(object):
         Note: this array is transposed from normal image orientation and comes as part
         of a three-tuple, the other parts of which are also used by the radiance method.
         '''
-        # get vignette center
-        vignette_center_x, vignette_center_y = self.vignette_center
+        # With RedEdge-P, the vignette is provided using polynomials that are already
+        # provided, thus there is a need for another vignette calculation.
+        if self.meta.camera_model() == 'RedEdge-P':
+            vignettingPoly2DName = self.meta.get_item('XMP:VignettingPolynomial2DName')
+            vignettingPoly2D = self.meta.get_item('XMP:VignettingPolynomial2D')
+            poly = build_powers_coefficients(vignettingPoly2DName, vignettingPoly2D)
 
-        # get a copy of the vignette polynomial because we want to modify it here
-        v_poly_list = list(self.vignette_polynomial)
+            # Computing the vignetting effect for all values
+            rows, cols = self.raw().shape
+            x, y = np.meshgrid(np.arange(cols), np.arange(rows))
+            #meshgrid returns transposed arrays
+            x = x.T
+            y = y.T
+            vignetteFactors = np.ones((rows, cols), dtype=np.float32)
+            for y in range(rows):
+                for x in range(cols):
+                    vignetteFactors[y,x] = vignetting(poly, x/cols, y/rows)
+            vignette = 1./vignetteFactors.T
+            return vignette, x, y
+        else:
+            # get vignette center
+            vignette_center_x, vignette_center_y = self.vignette_center
 
-        # reverse list and append 1., so that we can call with numpy polyval
-        v_poly_list.reverse()
-        v_poly_list.append(1.)
-        v_polynomial = np.array(v_poly_list)
+            # get a copy of the vignette polynomial because we want to modify it here
+            v_poly_list = list(self.vignette_polynomial)
 
-        # perform vignette correction
-        # get coordinate grid across image, seem swapped because of transposed vignette
-        x_dim, y_dim = self.raw().shape[1], self.raw().shape[0]
-        x, y = np.meshgrid(np.arange(x_dim), np.arange(y_dim))
+            # reverse list and append 1., so that we can call with numpy polyval
+            v_poly_list.reverse()
+            v_poly_list.append(1.)
+            v_polynomial = np.array(v_poly_list)
 
-        #meshgrid returns transposed arrays
-        x = x.T
-        y = y.T
+            # perform vignette correction
+            # get coordinate grid across image, seem swapped because of transposed vignette
+            x_dim, y_dim = self.raw().shape[1], self.raw().shape[0]
+            x, y = np.meshgrid(np.arange(x_dim), np.arange(y_dim))
 
-        # compute matrix of distances from image center
-        r = np.hypot((x-vignette_center_x), (y-vignette_center_y))
+            #meshgrid returns transposed arrays
+            x = x.T
+            y = y.T
 
-        # compute the vignette polynomial for each distance - we divide by the polynomial so that the
-        # corrected image is image_corrected = image_original * vignetteCorrection
-        vignette = 1./np.polyval(v_polynomial, r)
-        return vignette, x, y
+            # compute matrix of distances from image center
+            r = np.hypot((x-vignette_center_x), (y-vignette_center_y))
+
+            # compute the vignette polynomial for each distance - we divide by the polynomial so that the
+            # corrected image is image_corrected = image_original * vignetteCorrection
+            vignette = 1./np.polyval(v_polynomial, r)
+            return vignette, x, y
 
     def undistorted_radiance(self, force_recompute=False):
         return self.undistorted(self.radiance(force_recompute))

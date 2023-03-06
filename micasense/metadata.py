@@ -295,7 +295,7 @@ class Metadata(object):
         version_string = self.firmware_version().strip('v')
         if self.camera_model() == "Altum":
             good_version = "1.2.3"
-        elif self.camera_model() == 'RedEdge' or self.camera_model() == 'RedEdge-M':
+        elif self.camera_model() == 'RedEdge' or self.camera_model() == 'RedEdge-M' or self.camera_model() == 'RedEdge-P':
             good_version = "5.1.7"
         else:
             raise ValueError("Camera model is required to be RedEdge or Altum, not {} ".format(self.camera_model()))
