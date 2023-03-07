@@ -21,6 +21,9 @@ import numpy as np
 import os, glob
 import math
 import imageio
+import json
+# import tifffile
+import exiftool
 # MicaSense imageprocessing toolbox imports
 from micasense import image, capture, panel, imageset, dls, plotutils, utils
 
@@ -40,39 +43,49 @@ for img in cap.images:
     print(f'\t- ISO: {img.meta.get_item("EXIF:ISOSpeed")}')
     print(f'\t- Bits per pixel: {img.meta.bits_per_pixel()}')
 # RedEdge-P Downwelling Light Sensor (DLS) values
-plt.scatter(cap.center_wavelengths(), cap.dls_irradiance(), color='b', label='DLS Sensor')
-plt.scatter(cap.center_wavelengths(), cap.panel_irradiance(), color='r', label='Calibration Panel')
-plt.xlabel('Wavelength (nm)')
-plt.ylabel('Irradiance ($W/m^2/nm$)')
-plt.legend()
+# plt.scatter(cap.center_wavelengths(), cap.dls_irradiance(), color='b', label='DLS Sensor')
+# plt.scatter(cap.center_wavelengths(), cap.panel_irradiance(), color='r', label='Calibration Panel')
+# plt.xlabel('Wavelength (nm)')
+# plt.ylabel('Irradiance ($W/m^2/nm$)')
+# plt.legend()
 
-fig, ax = plt.subplots()
-wavelengths = np.linspace(0, 2000, 1000)
-def gaussian(x, mu, sig):
-    return (np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.))))/(np.sqrt(2*np.pi)*sig)
-for img in cap.images:
-    center = img.meta.center_wavelength()
-    bandwidth = img.meta.bandwidth()
-    std = bandwidth/(2*math.sqrt(2*math.log(2)))
-    amplitude = gaussian(wavelengths, center, std)
-    ax.plot(wavelengths, amplitude, label=img.meta.band_name())
-ax.set_xlabel('Wavelength (nm)')
-ax.set_ylabel('Relative Amplitude (/)')
-ax.legend()
+# fig, ax = plt.subplots()
+# wavelengths = np.linspace(0, 2000, 1000)
+# def gaussian(x, mu, sig):
+#     return (np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.))))/(np.sqrt(2*np.pi)*sig)
+# for img in cap.images:
+#     center = img.meta.center_wavelength()
+#     bandwidth = img.meta.bandwidth()
+#     std = bandwidth/(2*math.sqrt(2*math.log(2)))
+#     amplitude = gaussian(wavelengths, center, std)
+#     ax.plot(wavelengths, amplitude, label=img.meta.band_name())
+# ax.set_xlabel('Wavelength (nm)')
+# ax.set_ylabel('Relative Amplitude (/)')
+# ax.legend()
 
-cap.plot_raw()
-cap.plot_vignette()
-cap.plot_undistorted_reflectance(np.multiply(cap.dls_irradiance(),cap.panel_irradiance()))
-plt.show(block=True)
+# cap.plot_raw()
+# cap.plot_vignette()
+# cap.plot_undistorted_reflectance(np.multiply(cap.dls_irradiance(),cap.panel_irradiance()))
+# plt.show(block=True)
 
 # cap.save_capture_as_rgb()
-
+if os.environ.get('exiftoolpath') is not None:
+    exiftoolPath = os.path.normpath(os.environ.get('exiftoolpath'))
+else:
+    exiftoolPath = None
+dlsIrradiance = cap.dls_irradiance()
+panelIrradiance = cap.panel_irradiance()
 # for the export of the images, use imageio
 for i, img in enumerate(cap.images):
-    name = "{0}_{2}{1}".format(*os.path.splitext(img.path) + ('post',))
-    values = img.undistorted_reflectance(cap.dls_irradiance()[i]*cap.panel_irradiance()[i])
+    fileName, ext = os.path.splitext(img.path)
+    name = "{0}".format(fileName[:-1] + 'post_' + str(i+1) + ext)
+    values = img.undistorted_reflectance(dlsIrradiance[i]*panelIrradiance[i])
+    metaDataOriginal = img.meta.get_all()
     imageio.imwrite(name, values)
-
+    metaData = json.dumps(metaDataOriginal)
+    with exiftool.ExifTool(exiftoolPath) as exift:
+        exift.execute(b"-tagsFromFile", bytes(img.path, encoding='utf8'), bytes(name, encoding='utf8'))
+    os.remove(name+'_original')
 ###
 # Now, the processing pipeline seem to be: 
 # - Pre-process the images for vignetting and reflectance correction 
